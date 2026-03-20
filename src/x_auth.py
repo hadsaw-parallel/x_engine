@@ -19,6 +19,39 @@ logger = logging.getLogger(__name__)
 COOKIES_FILE = "cookies.json"
 
 
+def _patch_client_transaction() -> None:
+    """
+    Twikit 2.x parses X's homepage to generate request transaction IDs.
+    This parsing breaks on Android/Termux because X changed their page structure.
+    Patch both methods to fail silently so login can still proceed.
+    """
+    try:
+        from twikit.x_client_transaction.transaction import ClientTransaction
+
+        original_init = ClientTransaction.init
+        original_generate = ClientTransaction.generate_transaction_id
+
+        async def _safe_init(self, *args, **kwargs):
+            try:
+                await original_init(self, *args, **kwargs)
+            except Exception:
+                self._inited = True  # mark done even if scraping failed
+
+        def _safe_generate(self, *args, **kwargs):
+            try:
+                return original_generate(self, *args, **kwargs)
+            except Exception:
+                return ""  # empty header — X still processes the request
+
+        ClientTransaction.init = _safe_init
+        ClientTransaction.generate_transaction_id = _safe_generate
+    except Exception:
+        pass  # if twikit structure changes, skip silently
+
+
+_patch_client_transaction()
+
+
 class LoginSession:
     """Shared state between the background login thread and the Telegram handler."""
 
