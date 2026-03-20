@@ -32,13 +32,7 @@ def is_configured() -> bool:
     return bool(CLAUDE_API_KEY) and Path(COOKIES_FILE).exists()
 
 
-def save_config(claude_api_key: str, model_id: str, auth_token: str, ct0: str) -> None:
-    """Persist all user settings to .env and cookies.json."""
-    from twikit import Client
-
+def save_config(claude_api_key: str, model_id: str) -> None:
+    """Persist Claude settings to .env. X cookies are saved separately by twikit."""
     set_key(ENV_FILE, "CLAUDE_API_KEY", claude_api_key)
     set_key(ENV_FILE, "CLAUDE_MODEL", model_id)
-
-    client = Client("en-US")
-    client.set_cookies({"auth_token": auth_token, "ct0": ct0})
-    client.save_cookies(COOKIES_FILE)
