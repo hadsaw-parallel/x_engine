@@ -60,7 +60,11 @@ def _run_login(session: LoginSession, username: str, password: str) -> None:
 
         client = Client("en-US")
         loop.run_until_complete(
-            client.login(auth_info_1=username, password=password)
+            client.login(
+                auth_info_1=username,
+                password=password,
+                enable_ui_metrics=False,
+            )
         )
         client.save_cookies(COOKIES_FILE)
         session.client = client
