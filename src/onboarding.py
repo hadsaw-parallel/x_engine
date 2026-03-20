@@ -64,24 +64,15 @@ async def receive_claude_key(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception:
         pass
 
-    status = await update.message.reply_text("🔑 Validating API key…")
+    status = await update.message.reply_text("🔑 Checking API key…")
 
-    try:
-        test_client = anthropic.Anthropic(api_key=key)
-        test_client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=5,
-            messages=[{"role": "user", "content": "hi"}],
-        )
-    except anthropic.AuthenticationError:
+    # Validate by format — Claude keys always start with "sk-ant-"
+    if not key.startswith("sk-ant-") or len(key) < 40:
         await status.edit_text(
-            "❌ Invalid API key. Please check and try again.\n\n"
-            "Get your key at console.anthropic.com"
-        )
-        return AWAITING_CLAUDE_KEY
-    except Exception as e:
-        await status.edit_text(
-            f"❌ Could not validate key: {str(e)[:120]}\n\nPlease try again:"
+            "❌ That doesn't look like a valid Claude API key.\n\n"
+            "It should start with `sk-ant-` and be ~100 characters long.\n"
+            "Get yours at console.anthropic.com",
+            parse_mode="Markdown",
         )
         return AWAITING_CLAUDE_KEY
 
