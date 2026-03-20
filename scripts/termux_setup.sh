@@ -16,8 +16,7 @@ pkg install -y -q python git
 
 # ── 2. Python dependencies ──────────────────────────────────────────────────
 echo "🐍 Installing Python dependencies…"
-pip install --upgrade pip -q
-pip install -r requirements.txt -q
+pip install -r requirements.txt
 
 # ── 3. Telegram bot token ───────────────────────────────────────────────────
 echo ""
