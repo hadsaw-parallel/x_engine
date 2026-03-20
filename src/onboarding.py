@@ -200,8 +200,10 @@ async def receive_x_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def _finish_login(update, context, session: LoginSession, status_msg) -> int:
     if session.error:
+        logger.error(f"X login error: {session.error}")
+        short_error = str(session.error)[:200]
         await status_msg.edit_text(
-            f"❌ {session.error}\n\nSend /setup to try again."
+            f"❌ X login failed:\n{short_error}\n\nSend /setup to try again."
         )
         return ConversationHandler.END
 
