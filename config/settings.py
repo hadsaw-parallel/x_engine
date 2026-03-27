@@ -33,6 +33,9 @@ def is_configured() -> bool:
 
 
 def save_config(claude_api_key: str, model_id: str) -> None:
-    """Persist Claude settings to .env. X cookies are saved separately by twikit."""
+    """Persist Claude settings to .env and update in-memory values."""
+    global CLAUDE_API_KEY, CLAUDE_MODEL
     set_key(ENV_FILE, "CLAUDE_API_KEY", claude_api_key)
     set_key(ENV_FILE, "CLAUDE_MODEL", model_id)
+    CLAUDE_API_KEY = claude_api_key
+    CLAUDE_MODEL = model_id
