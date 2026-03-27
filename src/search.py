@@ -9,6 +9,39 @@ from config.settings import COOKIES_FILE, MAX_RESULTS
 logger = logging.getLogger(__name__)
 
 
+def _patch_client_transaction() -> None:
+    """
+    Twikit 2.x parses X's homepage to generate request transaction IDs.
+    This parsing can break when X changes their page structure.
+    Patch both methods to fail silently so API calls can still proceed.
+    """
+    try:
+        from twikit.x_client_transaction.transaction import ClientTransaction
+
+        original_init = ClientTransaction.init
+        original_generate = ClientTransaction.generate_transaction_id
+
+        async def _safe_init(self, *args, **kwargs):
+            try:
+                await original_init(self, *args, **kwargs)
+            except Exception:
+                self._inited = True
+
+        def _safe_generate(self, *args, **kwargs):
+            try:
+                return original_generate(self, *args, **kwargs)
+            except Exception:
+                return ""
+
+        ClientTransaction.init = _safe_init
+        ClientTransaction.generate_transaction_id = _safe_generate
+    except Exception:
+        pass
+
+
+_patch_client_transaction()
+
+
 @dataclass
 class Post:
     username: str
