@@ -4,13 +4,13 @@ Telegram onboarding wizard.
 Steps:
   1. Claude API key  (format check)
   2. Claude model    (inline keyboard)
-  3. X username or email
-  4. X password      (deleted from chat immediately)
-  5. Email verification code — only if X triggers it (rare)
+  3. X auth_token    (from browser cookies)
+  4. X ct0 token     (from browser cookies)
 
 On completion saves to .env + cookies.json and restarts the process.
 """
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -25,17 +25,15 @@ from telegram.ext import (
     filters,
 )
 
-from config.settings import MODEL_CHOICES, save_config
-from src.x_auth import LoginSession, provide_code, start_login, wait_for_login
+from config.settings import COOKIES_FILE, MODEL_CHOICES, save_config
 
 logger = logging.getLogger(__name__)
 
 # ── Conversation states ───────────────────────────────────────────────────────
 AWAITING_CLAUDE_KEY  = 1
 AWAITING_MODEL       = 2
-AWAITING_X_USERNAME  = 3
-AWAITING_X_PASSWORD  = 4
-AWAITING_X_CODE      = 5   # only if X asks for email verification
+AWAITING_AUTH_TOKEN   = 3
+AWAITING_CT0          = 4
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -43,11 +41,11 @@ AWAITING_X_CODE      = 5   # only if X asks for email verification
 async def start_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
     await update.message.reply_text(
-        "👋 Welcome to X Engine!\n\n"
+        "Welcome to X Engine!\n\n"
         "Let's get you configured. I'll need:\n"
         "  1. Your Claude API key\n"
         "  2. Your preferred Claude model\n"
-        "  3. Your X username and password\n\n"
+        "  3. Your X auth_token and ct0 cookies\n\n"
         "First, send your Claude API key.\n"
         "Get one at console.anthropic.com\n\n"
         "Send /cancel at any time to stop."
@@ -67,21 +65,20 @@ async def receive_claude_key(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     if not key.startswith("sk-ant-") or len(key) < 40:
         await update.message.reply_text(
-            "❌ That doesn't look like a valid Claude API key.\n\n"
-            "It should start with `sk-ant-` and be ~100 characters.\n"
+            "That doesn't look like a valid Claude API key.\n\n"
+            "It should start with sk-ant- and be ~100 characters.\n"
             "Get yours at console.anthropic.com",
-            parse_mode="Markdown",
         )
         return AWAITING_CLAUDE_KEY
 
     context.user_data["claude_api_key"] = key
 
     keyboard = [
-        [InlineKeyboardButton(f"⚡ {label}", callback_data=choice)]
+        [InlineKeyboardButton(f"{label}", callback_data=choice)]
         for choice, (_, label) in MODEL_CHOICES.items()
     ]
     await update.message.reply_text(
-        "✅ API key saved!\n\nChoose your Claude model:",
+        "API key saved!\n\nChoose your Claude model:",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
     return AWAITING_MODEL
@@ -100,125 +97,92 @@ async def receive_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     model_id, model_label = MODEL_CHOICES[choice]
     context.user_data["model_id"] = model_id
 
-    await query.edit_message_text(f"✅ Model: {model_label}")
+    await query.edit_message_text(f"Model: {model_label}")
     await query.message.reply_text(
-        "🐦 Now let's connect your X account.\n\n"
-        "Send me your X username or email address:"
+        "Now let's connect your X account.\n\n"
+        "I need your browser cookies from x.com.\n\n"
+        "How to get them:\n"
+        "1. Open x.com in your browser and log in\n"
+        "2. Open DevTools (F12) > Application > Cookies > x.com\n"
+        "3. Find the cookie named auth_token and copy its value\n\n"
+        "Send me your auth_token now:\n"
+        "(It will be deleted from chat immediately)"
     )
-    return AWAITING_X_USERNAME
+    return AWAITING_AUTH_TOKEN
 
 
-# ── Step 3: X username ────────────────────────────────────────────────────────
+# ── Step 3: X auth_token ─────────────────────────────────────────────────────
 
-async def receive_x_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    username = update.message.text.strip().lstrip("@")
+async def receive_auth_token(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    token = update.message.text.strip()
 
-    if len(username) < 2:
-        await update.message.reply_text("Please send a valid username or email:")
-        return AWAITING_X_USERNAME
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
 
-    context.user_data["x_username"] = username
+    if len(token) < 20:
+        await update.message.reply_text(
+            "That doesn't look like a valid auth_token.\n"
+            "It should be a ~40 character hex string.\n"
+            "Please try again:"
+        )
+        return AWAITING_AUTH_TOKEN
+
+    context.user_data["auth_token"] = token
     await update.message.reply_text(
-        "Now send your X password.\n"
-        "_(It will be deleted from chat immediately)_",
-        parse_mode="Markdown",
+        "Got it!\n\n"
+        "Now send me the ct0 cookie value.\n"
+        "It's in the same cookies list in DevTools.\n"
+        "(It will be deleted from chat immediately)"
     )
-    return AWAITING_X_PASSWORD
+    return AWAITING_CT0
 
 
-# ── Step 4: X password ────────────────────────────────────────────────────────
+# ── Step 4: X ct0 ────────────────────────────────────────────────────────────
 
-async def receive_x_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    password = update.message.text.strip()
+async def receive_ct0(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    ct0 = update.message.text.strip()
 
     try:
         await update.message.delete()
     except Exception:
         pass
 
-    if len(password) < 4:
-        await update.message.reply_text("Password seems too short. Try again:")
-        return AWAITING_X_PASSWORD
-
-    status = await update.message.reply_text("🔐 Logging into X…")
-
-    # Start login in background thread
-    session = start_login(
-        username=context.user_data["x_username"],
-        password=password,
-    )
-    context.user_data["login_session"] = session
-
-    result = await wait_for_login(session, timeout=40.0)
-
-    if result == "needs_code":
-        await status.edit_text(
-            "📧 X sent a verification code to your email.\n\n"
-            "Check your inbox and send the code here:"
+    if len(ct0) < 10:
+        await update.message.reply_text(
+            "That doesn't look like a valid ct0 token.\n"
+            "Please check DevTools and try again:"
         )
-        return AWAITING_X_CODE
+        return AWAITING_CT0
 
-    if result == "timeout":
-        await status.edit_text(
-            "⏱ Login timed out. Please check your credentials and try again.\n"
-            "Send /setup to start over."
-        )
-        return ConversationHandler.END
-
-    # result == "done"
-    return await _finish_login(update, context, session, status)
-
-
-# ── Step 5: Email verification code (only if triggered) ──────────────────────
-
-async def receive_x_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    code = update.message.text.strip()
+    # Build and save cookies.json for Twikit
+    cookies = {
+        "ct0": ct0,
+        "auth_token": context.user_data["auth_token"],
+    }
 
     try:
-        await update.message.delete()
-    except Exception:
-        pass
-
-    session: LoginSession = context.user_data.get("login_session")
-    if session is None:
-        await update.message.reply_text("Session expired. Send /setup to start over.")
-        return ConversationHandler.END
-
-    status = await update.message.reply_text("🔐 Verifying code…")
-
-    provide_code(session, code)
-    result = await wait_for_login(session, timeout=30.0)
-
-    if result == "timeout":
-        await status.edit_text("⏱ Timed out. Send /setup to try again.")
-        return ConversationHandler.END
-
-    return await _finish_login(update, context, session, status)
-
-
-# ── Shared finish ─────────────────────────────────────────────────────────────
-
-async def _finish_login(update, context, session: LoginSession, status_msg) -> int:
-    if session.error:
-        logger.error(f"X login error: {session.error}")
-        short_error = str(session.error)[:200]
-        await status_msg.edit_text(
-            f"❌ X login failed:\n{short_error}\n\nSend /setup to try again."
+        with open(COOKIES_FILE, "w") as f:
+            json.dump(cookies, f, indent=2)
+    except Exception as e:
+        logger.error(f"Failed to save cookies: {e}")
+        await update.message.reply_text(
+            f"Failed to save cookies: {e}\nSend /setup to try again."
         )
         return ConversationHandler.END
 
-    # Save Claude settings (.env) — cookies already saved by twikit
+    # Save Claude settings to .env
     save_config(
         claude_api_key=context.user_data["claude_api_key"],
         model_id=context.user_data["model_id"],
     )
 
-    await status_msg.edit_text(
-        "✅ All done! X Engine is configured and ready.\n\n"
+    await update.message.reply_text(
+        "All done! X Engine is configured and ready.\n\n"
         "Just type any question and I'll search X for you.\n\n"
-        "Example: *what's new in AI agents this week?*\n\n"
-        "_Restarting to apply settings…_",
-        parse_mode="Markdown",
+        "Example: what's new in AI agents this week?\n\n"
+        "Restarting to apply settings...",
     )
 
     asyncio.get_event_loop().call_later(1.5, _restart)
@@ -247,14 +211,11 @@ def create_onboarding_handler() -> ConversationHandler:
             AWAITING_MODEL: [
                 CallbackQueryHandler(receive_model)
             ],
-            AWAITING_X_USERNAME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_x_username)
+            AWAITING_AUTH_TOKEN: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_auth_token)
             ],
-            AWAITING_X_PASSWORD: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_x_password)
-            ],
-            AWAITING_X_CODE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_x_code)
+            AWAITING_CT0: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_ct0)
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
