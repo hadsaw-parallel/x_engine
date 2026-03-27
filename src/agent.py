@@ -108,6 +108,7 @@ async def research(question: str, status_callback=None) -> dict:
 async def _run_searches(queries: list[str], seen_urls: set[str]) -> list[Post]:
     """Run multiple search queries, deduplicate results."""
     new_posts = []
+    last_error = None
 
     for q in queries:
         try:
@@ -118,6 +119,11 @@ async def _run_searches(queries: list[str], seen_urls: set[str]) -> list[Post]:
                     new_posts.append(p)
         except Exception as e:
             logger.warning(f"Search failed for '{q}': {e}")
+            last_error = e
+
+    # If ALL queries failed, raise so the user sees the actual error
+    if not new_posts and last_error is not None:
+        raise RuntimeError(f"All searches failed: {last_error}")
 
     return new_posts
 

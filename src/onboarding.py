@@ -10,7 +10,6 @@ Steps:
 On completion saves to .env + cookies.json and restarts the process.
 """
 import asyncio
-import json
 import logging
 import os
 import sys
@@ -24,6 +23,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from twikit import Client
 
 from config.settings import COOKIES_FILE, MODEL_CHOICES, save_config
 
@@ -156,15 +156,14 @@ async def receive_ct0(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         )
         return AWAITING_CT0
 
-    # Build and save cookies.json for Twikit
-    cookies = {
-        "ct0": ct0,
-        "auth_token": context.user_data["auth_token"],
-    }
-
+    # Save cookies via Twikit (same as setup_cookies.py)
     try:
-        with open(COOKIES_FILE, "w") as f:
-            json.dump(cookies, f, indent=2)
+        client = Client("en-US")
+        client.set_cookies({
+            "auth_token": context.user_data["auth_token"],
+            "ct0": ct0,
+        })
+        client.save_cookies(COOKIES_FILE)
     except Exception as e:
         logger.error(f"Failed to save cookies: {e}")
         await update.message.reply_text(
